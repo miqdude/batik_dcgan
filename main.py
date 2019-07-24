@@ -2,13 +2,19 @@ from torch import nn
 import torch
 from torchvision import datasets
 from torchvision import transforms
-
+from torch.autograd import Variable
+import numpy as np
+from torchvision.utils import save_image
 
 
 BATCH_SIZE = 128
-DATASET_ROOT_DIR = 'root_folder_dir'
+DATASET_ROOT_DIR = r'C:\Users\CORE\Desktop\miqdude\Kawung'
+# 'C:\Users\CORE\Desktop\miqdude\Kawung'
 LEARNING_RATE = 0.002
 EPOCH = 2000
+SAVE_INTERVAL = 400
+NOISE_VECTOR_DIM = 100
+
 
 cuda = True if torch.cuda.is_available() else False
 
@@ -47,10 +53,12 @@ class Generator(nn.Module):
         self.conv_block_5 = nn.Sequential(
             nn.Conv2d(32,64,kernel_size=5, stride=2),
             nn.Tanh()
-        )    
+        )
 
-    def forward(self, nosie_z):
-        out = self.conv_block_1(z)
+        self.l1 = nn.Sequential(nn.Linear(NOISE_VECTOR_DIM, 4 * 1 *4))    
+
+    def forward(self, noise_z):
+        out = self.conv_block_1(noise_z)
         out = self.conv_block_2(out)
         out = self.conv_block_3(out)
         out = self.conv_block_4(out)
@@ -119,8 +127,8 @@ discriminator.apply(weights_init_normal)
 dataloader = torch.utils.data.DataLoader(
     datasets.ImageFolder(
         DATASET_ROOT_DIR,
-        transforms.Resize(
-            (128,128)
+        transform = transforms.Compose(
+            [transforms.Resize((128,128)), transforms.ToTensor()]
         )
     ),
     batch_size=BATCH_SIZE,
@@ -128,8 +136,8 @@ dataloader = torch.utils.data.DataLoader(
 )
 
 # Optimizers
-optimizer_G = torch.optim.Adam(generator.parameters(), lr=LEARNING_RATE)
-optimizer_D = torch.optim.Adam(discriminator.parameters(), lr=LEARNING_RATE)
+optimizer_G = torch.optim.Adam(generator.parameters(), lr=LEARNING_RATE, betas=(0.5, 0.999))
+optimizer_D = torch.optim.Adam(discriminator.parameters(), lr=LEARNING_RATE, betas=(0.5, 0.999))
 
 Tensor = torch.cuda.FloatTensor if cuda else torch.FloatTensor
 
@@ -155,7 +163,7 @@ for epoch in range(EPOCH):
         optimizer_G.zero_grad()
 
         # Sample noise as generator input
-        z = Variable(Tensor(np.random.normal(0, 1, (imgs.shape[0], opt.latent_dim))))
+        z = Variable(Tensor(np.random.normal(0, 1, (imgs.shape[0],NOISE_VECTOR_DIM))))
 
         # Generate a batch of images
         gen_imgs = generator(z)
@@ -182,10 +190,10 @@ for epoch in range(EPOCH):
 
         print(
             "[Epoch %d/%d] [Batch %d/%d] [D loss: %f] [G loss: %f]"
-            % (epoch, opt.n_epochs, i, len(dataloader), d_loss.item(), g_loss.item())
+            % (epoch, EPOCH, i, len(dataloader), d_loss.item(), g_loss.item())
         )
 
         batches_done = epoch * len(dataloader) + i
-        if batches_done % opt.sample_interval == 0:
-            save_image(gen_imgs.data[:25], "images/%d.png" % batches_done, nrow=5, normalize=True)
+        if batches_done % SAVE_INTERVAL == 0:
+            save_image(gen_imgs.data[:25], "generatedBatik/%d.png" % batches_done, nrow=5, normalize=True)
 
