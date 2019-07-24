@@ -5,7 +5,9 @@ from torchvision import transforms
 from torch.autograd import Variable
 import numpy as np
 from torchvision.utils import save_image
-
+import torchvision.utils as vutils
+import torch.nn.parallel
+import torch.optim as optim
 
 BATCH_SIZE = 128
 DATASET_ROOT_DIR = r'C:\Users\CORE\Desktop\miqdude\Kawung'
@@ -31,31 +33,29 @@ class Generator(nn.Module):
         super(Generator, self).__init__()
 
         self.conv_block_1 = nn.Sequential(
-            nn.Conv2d(1,4,kernel_size=5, stride=2),
-            nn.BatchNorm2d(4),
-            nn.ReLU()
+            nn.ConvTranspose2d(100,1024),
+            nn.BatchNorm2d(1024),
+            nn.ReLU(True)
         )    
         self.conv_block_2 = nn.Sequential(
-            nn.Conv2d(4,8,kernel_size=5, stride=2),
-            nn.BatchNorm2d(8),
-            nn.ReLU()
+            nn.ConvTranspose2d(1024,512,kernel_size=5),
+            nn.BatchNorm2d(512),
+            nn.ReLU(True)
         )    
         self.conv_block_3 = nn.Sequential(
-            nn.Conv2d(8,16,kernel_size=5, stride=2),
-            nn.BatchNorm2d(16),
-            nn.ReLU()
+            nn.ConvTranspose2d(512,256,kernel_size=5, stride=2),
+            nn.BatchNorm2d(256),
+            nn.ReLU(True)
         )    
         self.conv_block_4 = nn.Sequential(
-            nn.Conv2d(16,32,kernel_size=5, stride=2),
-            nn.BatchNorm2d(4),
-            nn.ReLU()
+            nn.ConvTranspose2d(256,128,kernel_size=5, stride=2),
+            nn.BatchNorm2d(128),
+            nn.ReLU(True)
         )    
         self.conv_block_5 = nn.Sequential(
-            nn.Conv2d(32,64,kernel_size=5, stride=2),
+            nn.ConvTranspose2d(128,3,kernel_size=5, stride=2),            
             nn.Tanh()
         )
-
-        self.l1 = nn.Sequential(nn.Linear(NOISE_VECTOR_DIM, 4 * 1 *4))    
 
     def forward(self, noise_z):
         out = self.conv_block_1(noise_z)
@@ -63,37 +63,33 @@ class Generator(nn.Module):
         out = self.conv_block_3(out)
         out = self.conv_block_4(out)
         out = self.conv_block_5(out)
-        out = out.view(-1, 64*64*3)
-        img = self.conv_blocks(out)
-        return img
+        return out
 
 
 class Discriminator(nn.Module):
     def __init__(self):
         super(Discriminator, self).__init__()
 
-        self.dconv_1 = nn.Sequential(
-            nn.Conv2d(128, 64, kernel_size=5, stride=2),
-            nn.BatchNorm2d(64),
-            nn.LeakyReLU()
+        self.conv_1 = nn.Sequential(
+            nn.Conv2d(3, 128, kernel_size=5, stride=2),
+            nn.BatchNorm2d(128),
+            nn.LeakyReLU(0.2, inplace = True),
         )
-        self.dconv_2 = nn.Sequential(
-            nn.Conv2d(64, 32,kernel_size=5, stride=2),
-            nn.BatchNorm2d(32),
-            nn.LeakyReLU()
+        self.conv_2 = nn.Sequential(
+            nn.Conv2d(128, 256,kernel_size=5, stride=2),
+            nn.BatchNorm2d(256),
+            nn.LeakyReLU(0.2, inplace = True),
         )
-        self.dconv_3 = nn.Sequential(
-            nn.Conv2d(32, 16, kernel_size=5, stride=2),
-            nn.BatchNorm2d(16),
-            nn.LeakyReLU()
+        self.conv_3 = nn.Sequential(
+            nn.Conv2d(256, 512, kernel_size=5, stride=2),
+            nn.BatchNorm2d(512),
+            nn.LeakyReLU(0.2, inplace = True),
         )
-        self.dconv_4 = nn.Sequential(
-            nn.Conv2d(16, 8, kernel_size=5, stride=2),
-            nn.BatchNorm2d(8),
-            nn.LeakyReLU()
+        self.conv_4 = nn.Sequential(
+            nn.Conv2d(512, 1024, kernel_size=5, stride=2),
+            nn.BatchNorm2d(1024),
+            nn.LeakyReLU(0.2, inplace = True),
         )
-
-        self.adv_layer = nn.Sequential(nn.Linear(8 * 8 * 8, 1), nn.Sigmoid())
 
     def forward(self, img):
         out = self.dconv_1(img)
@@ -101,10 +97,9 @@ class Discriminator(nn.Module):
         out = self.dconv_3(out)
         out = self.dconv_4(out)
 
-        out = out.view(out.shape[0], -1)
-        validity = self.adv_layer(out)
+        out = out.view(-1)
 
-        return validity
+        return out
         
 
 # Loss function
@@ -142,58 +137,38 @@ optimizer_D = torch.optim.Adam(discriminator.parameters(), lr=LEARNING_RATE, bet
 Tensor = torch.cuda.FloatTensor if cuda else torch.FloatTensor
 
 
-# ----------
-#  Training
-# ----------
-
 for epoch in range(EPOCH):
-    for i, (imgs, _) in enumerate(dataloader):
 
-        # Adversarial ground truths
-        valid = Variable(Tensor(imgs.shape[0], 1).fill_(1.0), requires_grad=False)
-        fake = Variable(Tensor(imgs.shape[0], 1).fill_(0.0), requires_grad=False)
+    for i, data in enumerate(dataloader, 0):
+        
+        netD.zero_grad()
+        
+        real, _ = data
+        input = Variable(real)
+        target = Variable(torch.ones(input.size()[0]))
+        output = netD(input)
+        errD_real = criterion(output, target)
+        
+        noise = Variable(torch.randn(input.size()[0], 100, 1, 1))
+        fake = netG(noise)
+        target = Variable(torch.zeros(input.size()[0]))
+        output = netD(fake.detach())
+        errD_fake = criterion(output, target)
+        
+        errD = errD_real + errD_fake
+        errD.backward()
+        optimizerD.step()
 
-        # Configure input
-        real_imgs = Variable(imgs.type(Tensor))
+        netG.zero_grad()
+        target = Variable(torch.ones(input.size()[0]))
+        output = netD(fake)
+        errG = criterion(output, target)
+        errG.backward()
+        optimizerG.step()
+        
 
-        # -----------------
-        #  Train Generator
-        # -----------------
-
-        optimizer_G.zero_grad()
-
-        # Sample noise as generator input
-        z = Variable(Tensor(np.random.normal(0, 1, (imgs.shape[0],NOISE_VECTOR_DIM))))
-
-        # Generate a batch of images
-        gen_imgs = generator(z)
-
-        # Loss measures generator's ability to fool the discriminator
-        g_loss = adversarial_loss(discriminator(gen_imgs), valid)
-
-        g_loss.backward()
-        optimizer_G.step()
-
-        # ---------------------
-        #  Train Discriminator
-        # ---------------------
-
-        optimizer_D.zero_grad()
-
-        # Measure discriminator's ability to classify real from generated samples
-        real_loss = adversarial_loss(discriminator(real_imgs), valid)
-        fake_loss = adversarial_loss(discriminator(gen_imgs.detach()), fake)
-        d_loss = (real_loss + fake_loss) / 2
-
-        d_loss.backward()
-        optimizer_D.step()
-
-        print(
-            "[Epoch %d/%d] [Batch %d/%d] [D loss: %f] [G loss: %f]"
-            % (epoch, EPOCH, i, len(dataloader), d_loss.item(), g_loss.item())
-        )
-
-        batches_done = epoch * len(dataloader) + i
-        if batches_done % SAVE_INTERVAL == 0:
-            save_image(gen_imgs.data[:25], "generatedBatik/%d.png" % batches_done, nrow=5, normalize=True)
-
+        print('[%d/%d][%d/%d] Loss_D: %.4f Loss_G: %.4f' % (epoch, 25, i, len(dataloader), errD.data[0], errG.data[0]))
+        if i % 100 == 0:
+            vutils.save_image(real, '%s/real_samples.png' % "./results", normalize = True)
+            fake = netG(noise)
+            vutils.save_image(fake.data, '%s/fake_samples_epoch_%03d.png' % ("./results", epoch), normalize = True)
