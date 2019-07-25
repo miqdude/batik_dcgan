@@ -9,6 +9,9 @@ import torchvision.utils as vutils
 import torch.nn.parallel
 import torch.optim as optim
 
+
+# variables
+
 BATCH_SIZE = 128
 DATASET_ROOT_DIR = r'C:\Users\CORE\Desktop\miqdude\Kawung'
 # 'C:\Users\CORE\Desktop\miqdude\Kawung'
@@ -17,9 +20,11 @@ EPOCH = 2000
 SAVE_INTERVAL = 400
 NOISE_VECTOR_DIM = 100
 
-
+# check CUDA Support GPU
 cuda = True if torch.cuda.is_available() else False
 
+
+# initiate weight at class declaration
 def weights_init_normal(m):
     classname = m.__class__.__name__
     if classname.find("Conv") != -1:
@@ -28,27 +33,34 @@ def weights_init_normal(m):
         torch.nn.init.normal_(m.weight.data, 1.0, 0.02)
         torch.nn.init.constant_(m.bias.data, 0.0)
 
+
+
 class Generator(nn.Module):
     def __init__(self):
         super(Generator, self).__init__()
 
+        """ 
+        Inverse transpose convolution network
+        according to paper DCGAN by Alec Radford
+        """
         self.main = nn.Sequential(
-            nn.ConvTranspose2d(100, 512, 4, 1, 0, bias = False),
+            nn.ConvTranspose2d(100, 1024, 1, 1, 0, bias = False),
+            nn.BatchNorm2d(1024),
+            nn.ReLU(True),
+            nn.ConvTranspose2d(1024, 512, 5, 2, 0, bias = False),
             nn.BatchNorm2d(512),
             nn.ReLU(True),
-            nn.ConvTranspose2d(512, 256, 4, 2, 1, bias = False),
+            nn.ConvTranspose2d(512, 256, 5, 2, 0, bias = False),
             nn.BatchNorm2d(256),
             nn.ReLU(True),
-            nn.ConvTranspose2d(256, 128, 4, 2, 1, bias = False),
+            nn.ConvTranspose2d(256, 128, 5, 2, 0, bias = False),
             nn.BatchNorm2d(128),
             nn.ReLU(True),
-            nn.ConvTranspose2d(128, 64, 4, 2, 1, bias = False),
-            nn.BatchNorm2d(64),
-            nn.ReLU(True),
-            nn.ConvTranspose2d(64, 3, 4, 2, 1, bias = False),
+            nn.ConvTranspose2d(128, 3, 5, 2, 0, bias = False),
             nn.Tanh()
         )
 
+    # function called inside __init__
     def forward(self, input):
         output = self.main(input)
         return output
@@ -58,19 +70,23 @@ class Discriminator(nn.Module):
     def __init__(self):
         super(Discriminator, self).__init__()
 
+        """ 
+        convolution network
+        according to paper DCGAN by Alec Radford
+        """
         self.main = nn.Sequential(
-            nn.Conv2d(3, 64, 4, 2, 1, bias = False),
+            nn.Conv2d(3, 128, 5, 2, 0, bias = False),
             nn.LeakyReLU(0.2, inplace = True),
-            nn.Conv2d(64, 128, 4, 2, 1, bias = False),
-            nn.BatchNorm2d(128),
-            nn.LeakyReLU(0.2, inplace = True),
-            nn.Conv2d(128, 256, 4, 2, 1, bias = False),
+            nn.Conv2d(128, 256, 5, 2, 0, bias = False),
             nn.BatchNorm2d(256),
             nn.LeakyReLU(0.2, inplace = True),
-            nn.Conv2d(256, 512, 4, 2, 1, bias = False),
+            nn.Conv2d(256, 512, 5, 2, 0, bias = False),
             nn.BatchNorm2d(512),
             nn.LeakyReLU(0.2, inplace = True),
-            nn.Conv2d(512, 1, 4, 1, 0, bias = False),
+            nn.Conv2d(512, 1024, 5, 2, 0, bias = False),
+            nn.BatchNorm2d(1024),
+            nn.LeakyReLU(0.2, inplace = True),
+            nn.Conv2d(1024, 1, 1, 1, 0, bias = False),
             nn.Sigmoid()
         )
 
@@ -86,6 +102,7 @@ adversarial_loss = torch.nn.BCELoss()
 generator = Generator()
 discriminator = Discriminator()
 
+# enable cuda compute on generator, discriminator, and loss function
 if cuda:
     generator.cuda()
     discriminator.cuda()
@@ -95,7 +112,7 @@ if cuda:
 generator.apply(weights_init_normal)
 discriminator.apply(weights_init_normal)
 
-# Configure data loader
+# Configure data loader for feeding data to discriminator every batch
 dataloader = torch.utils.data.DataLoader(
     datasets.ImageFolder(
         DATASET_ROOT_DIR,
@@ -111,14 +128,14 @@ dataloader = torch.utils.data.DataLoader(
 optimizerG = torch.optim.Adam(generator.parameters(), lr=LEARNING_RATE, betas=(0.5, 0.999))
 optimizerD = torch.optim.Adam(discriminator.parameters(), lr=LEARNING_RATE, betas=(0.5, 0.999))
 
+# Tensor object for gpu compute
 Tensor = torch.cuda.FloatTensor if cuda else torch.FloatTensor
 
 
+# The training process
 for epoch in range(EPOCH):
 
     for i, data in enumerate(dataloader, 0):
-
-        # Training discriminator with real images
         
         discriminator.zero_grad() # clears the gradient
         
@@ -129,29 +146,56 @@ for epoch in range(EPOCH):
         errD_real = adversarial_loss(output, target)
         
 
-        # Generator generate images
+        # Generator generate fake images
         noise = Variable(torch.randn(input.size()[0], 100, 1, 1).cuda())
         fake = generator(noise)
         target = Variable(torch.zeros(input.size()[0]).cuda())
         
-        # discriminator estimates fake images
+    
         output = discriminator(fake.detach())
         errD_fake = adversarial_loss(output, target)
-        
+
+        # calculate error/loss on discriminator    
         errD = errD_real + errD_fake
-        errD.backward()
-        optimizerD.step()
+        errD.backward() # backward propagation
+        optimizerD.step() # optimizing model
 
         generator.zero_grad()
         target = Variable(torch.ones(input.size()[0]).cuda())
+
+
         output = discriminator(fake)
         errG = adversarial_loss(output, target)
         errG.backward()
         optimizerG.step()
         
+        # print training logs
+        print('[%d/%d][%d/%d] Loss_D: %.4f Loss_G: %.4f' % (epoch, EPOCH, i, len(dataloader), errD.data, errG.data))
+        
+        # logging training loss
+        with open("training_log.txt", "a") as myfile:
+            myfile.write('[%d/%d][%d/%d] Loss_D: %.4f Loss_G: %.4f' % (epoch, EPOCH, i, len(dataloader), errD.data, errG.data))
+            myfile.close()
 
-        print('[%d/%d][%d/%d] Loss_D: %.4f Loss_G: %.4f' % (epoch, 25, i, len(dataloader), errD.data, errG.data))
-        if i % 100 == 0:
-            vutils.save_image(real, '%s/real_samples_%03d.png' % ("./results",epoch), normalize = True)
-            fake = generator(noise)
-            vutils.save_image(fake.data, '%s/fake_samples_epoch_%03d.png' % ("./results", epoch), normalize = True)
+    # Save images and models per interval
+    if epoch % SAVE_INTERVAL == 0:
+        vutils.save_image(real, '%s/real_samples_%03d.png' % ("./results",epoch), normalize = True)
+        fake = generator(noise)
+        vutils.save_image(fake.data, '%s/fake_samples_epoch_%03d.png' % ("./results", epoch), normalize = True)
+
+        # save models for future use
+        # save generator 
+        torch.save({
+            'epoch': epoch,
+            'model_state_dict': generator.state_dict(),
+            'optimizer_state_dict': optimizerG.state_dict(),
+            'loss': errG,
+        }, './models/generator_%03d.pt' % epoch)
+
+        # save discriminator 
+        torch.save({
+            'epoch': epoch,
+            'model_state_dict': discriminator.state_dict(),
+            'optimizer_state_dict': optimizerD.state_dict(),
+            'loss': errD,
+        }, './models/discriminator_%03d.pt' % epoch)
