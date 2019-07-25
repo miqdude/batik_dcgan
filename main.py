@@ -32,74 +32,51 @@ class Generator(nn.Module):
     def __init__(self):
         super(Generator, self).__init__()
 
-        self.conv_block_1 = nn.Sequential(
-            nn.ConvTranspose2d(100,1024),
-            nn.BatchNorm2d(1024),
-            nn.ReLU(True)
-        )    
-        self.conv_block_2 = nn.Sequential(
-            nn.ConvTranspose2d(1024,512,kernel_size=5),
+        self.main = nn.Sequential(
+            nn.ConvTranspose2d(100, 512, 4, 1, 0, bias = False),
             nn.BatchNorm2d(512),
-            nn.ReLU(True)
-        )    
-        self.conv_block_3 = nn.Sequential(
-            nn.ConvTranspose2d(512,256,kernel_size=5, stride=2),
+            nn.ReLU(True),
+            nn.ConvTranspose2d(512, 256, 4, 2, 1, bias = False),
             nn.BatchNorm2d(256),
-            nn.ReLU(True)
-        )    
-        self.conv_block_4 = nn.Sequential(
-            nn.ConvTranspose2d(256,128,kernel_size=5, stride=2),
+            nn.ReLU(True),
+            nn.ConvTranspose2d(256, 128, 4, 2, 1, bias = False),
             nn.BatchNorm2d(128),
-            nn.ReLU(True)
-        )    
-        self.conv_block_5 = nn.Sequential(
-            nn.ConvTranspose2d(128,3,kernel_size=5, stride=2),            
+            nn.ReLU(True),
+            nn.ConvTranspose2d(128, 64, 4, 2, 1, bias = False),
+            nn.BatchNorm2d(64),
+            nn.ReLU(True),
+            nn.ConvTranspose2d(64, 3, 4, 2, 1, bias = False),
             nn.Tanh()
         )
 
-    def forward(self, noise_z):
-        out = self.conv_block_1(noise_z)
-        out = self.conv_block_2(out)
-        out = self.conv_block_3(out)
-        out = self.conv_block_4(out)
-        out = self.conv_block_5(out)
-        return out
+    def forward(self, input):
+        output = self.main(input)
+        return output
 
 
 class Discriminator(nn.Module):
     def __init__(self):
         super(Discriminator, self).__init__()
 
-        self.conv_1 = nn.Sequential(
-            nn.Conv2d(3, 128, kernel_size=5, stride=2),
+        self.main = nn.Sequential(
+            nn.Conv2d(3, 64, 4, 2, 1, bias = False),
+            nn.LeakyReLU(0.2, inplace = True),
+            nn.Conv2d(64, 128, 4, 2, 1, bias = False),
             nn.BatchNorm2d(128),
             nn.LeakyReLU(0.2, inplace = True),
-        )
-        self.conv_2 = nn.Sequential(
-            nn.Conv2d(128, 256,kernel_size=5, stride=2),
+            nn.Conv2d(128, 256, 4, 2, 1, bias = False),
             nn.BatchNorm2d(256),
             nn.LeakyReLU(0.2, inplace = True),
-        )
-        self.conv_3 = nn.Sequential(
-            nn.Conv2d(256, 512, kernel_size=5, stride=2),
+            nn.Conv2d(256, 512, 4, 2, 1, bias = False),
             nn.BatchNorm2d(512),
             nn.LeakyReLU(0.2, inplace = True),
-        )
-        self.conv_4 = nn.Sequential(
-            nn.Conv2d(512, 1024, kernel_size=5, stride=2),
-            nn.BatchNorm2d(1024),
-            nn.LeakyReLU(0.2, inplace = True),
+            nn.Conv2d(512, 1, 4, 1, 0, bias = False),
+            nn.Sigmoid()
         )
 
-    def forward(self, img):
-        out = self.dconv_1(img)
-        out = self.dconv_2(out)
-        out = self.dconv_3(out)
-        out = self.dconv_4(out)
-
-        out = out.view(-1)
-
-        return out
+    def forward(self, input):
+        output = self.main(input)
+        return output.view(-1)
         
 
 # Loss function
@@ -123,7 +100,7 @@ dataloader = torch.utils.data.DataLoader(
     datasets.ImageFolder(
         DATASET_ROOT_DIR,
         transform = transforms.Compose(
-            [transforms.Resize((128,128)), transforms.ToTensor()]
+            [transforms.Resize((64,64)), transforms.ToTensor(), transforms.Normalize([0.5], [0.5])]
         )
     ),
     batch_size=BATCH_SIZE,
@@ -131,8 +108,8 @@ dataloader = torch.utils.data.DataLoader(
 )
 
 # Optimizers
-optimizer_G = torch.optim.Adam(generator.parameters(), lr=LEARNING_RATE, betas=(0.5, 0.999))
-optimizer_D = torch.optim.Adam(discriminator.parameters(), lr=LEARNING_RATE, betas=(0.5, 0.999))
+optimizerG = torch.optim.Adam(generator.parameters(), lr=LEARNING_RATE, betas=(0.5, 0.999))
+optimizerD = torch.optim.Adam(discriminator.parameters(), lr=LEARNING_RATE, betas=(0.5, 0.999))
 
 Tensor = torch.cuda.FloatTensor if cuda else torch.FloatTensor
 
@@ -140,35 +117,41 @@ Tensor = torch.cuda.FloatTensor if cuda else torch.FloatTensor
 for epoch in range(EPOCH):
 
     for i, data in enumerate(dataloader, 0):
+
+        # Training discriminator with real images
         
-        netD.zero_grad()
+        discriminator.zero_grad() # clears the gradient
         
         real, _ = data
-        input = Variable(real)
-        target = Variable(torch.ones(input.size()[0]))
-        output = netD(input)
-        errD_real = criterion(output, target)
+        input = Variable(real.type(Tensor))  # input images must be Tensor for gpu compute
+        target = Variable(torch.ones(input.size()[0]).cuda())
+        output = discriminator(input)
+        errD_real = adversarial_loss(output, target)
         
-        noise = Variable(torch.randn(input.size()[0], 100, 1, 1))
-        fake = netG(noise)
-        target = Variable(torch.zeros(input.size()[0]))
-        output = netD(fake.detach())
-        errD_fake = criterion(output, target)
+
+        # Generator generate images
+        noise = Variable(torch.randn(input.size()[0], 100, 1, 1).cuda())
+        fake = generator(noise)
+        target = Variable(torch.zeros(input.size()[0]).cuda())
+        
+        # discriminator estimates fake images
+        output = discriminator(fake.detach())
+        errD_fake = adversarial_loss(output, target)
         
         errD = errD_real + errD_fake
         errD.backward()
         optimizerD.step()
 
-        netG.zero_grad()
-        target = Variable(torch.ones(input.size()[0]))
-        output = netD(fake)
-        errG = criterion(output, target)
+        generator.zero_grad()
+        target = Variable(torch.ones(input.size()[0]).cuda())
+        output = discriminator(fake)
+        errG = adversarial_loss(output, target)
         errG.backward()
         optimizerG.step()
         
 
-        print('[%d/%d][%d/%d] Loss_D: %.4f Loss_G: %.4f' % (epoch, 25, i, len(dataloader), errD.data[0], errG.data[0]))
+        print('[%d/%d][%d/%d] Loss_D: %.4f Loss_G: %.4f' % (epoch, 25, i, len(dataloader), errD.data, errG.data))
         if i % 100 == 0:
-            vutils.save_image(real, '%s/real_samples.png' % "./results", normalize = True)
-            fake = netG(noise)
+            vutils.save_image(real, '%s/real_samples_%03d.png' % ("./results",epoch), normalize = True)
+            fake = generator(noise)
             vutils.save_image(fake.data, '%s/fake_samples_epoch_%03d.png' % ("./results", epoch), normalize = True)
