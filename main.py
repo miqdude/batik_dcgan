@@ -13,11 +13,11 @@ import torch.optim as optim
 # variables
 
 BATCH_SIZE = 128
-DATASET_ROOT_DIR = r'C:\Users\CORE\Desktop\miqdude\Kawung'
+DATASET_ROOT_DIR = r'C:\Users\CORE\Desktop\miqdude\Batik'
 # 'C:\Users\CORE\Desktop\miqdude\Kawung'
 LEARNING_RATE = 0.002
 EPOCH = 2000
-SAVE_INTERVAL = 400
+SAVE_INTERVAL = 500
 NOISE_VECTOR_DIM = 100
 
 # check CUDA Support GPU
@@ -177,25 +177,25 @@ for epoch in range(EPOCH):
             myfile.write('[%d/%d][%d/%d] Loss_D: %.4f Loss_G: %.4f' % (epoch, EPOCH, i, len(dataloader), errD.data, errG.data))
             myfile.close()
 
-    # Save images and models per interval
-    if epoch % SAVE_INTERVAL == 0:
-        vutils.save_image(real, '%s/real_samples_%03d.png' % ("./results",epoch), normalize = True)
-        fake = generator(noise)
-        vutils.save_image(fake.data, '%s/fake_samples_epoch_%03d.png' % ("./results", epoch), normalize = True)
+        # Save images and models per interval
+        if epoch % SAVE_INTERVAL == 0:
+            vutils.save_image(real, '%s/real_samples_%03d.png' % ("./results",epoch), normalize = True)
+            fake = generator(noise)
+            vutils.save_image(fake.data, '%s/fake_samples_epoch_%03d.png' % ("./results", epoch), normalize = True)
 
-        # save models for future use
-        # save generator 
-        torch.save({
-            'epoch': epoch,
-            'model_state_dict': generator.state_dict(),
-            'optimizer_state_dict': optimizerG.state_dict(),
-            'loss': errG,
-        }, './models/generator_%03d.pt' % epoch)
+            # save models for future use
+            # save generator 
+            torch.save({
+                'epoch': epoch,
+                'model_state_dict': generator.state_dict(),
+                'optimizer_state_dict': optimizerG.state_dict(),
+                'loss': errG,
+            }, './models/generator_%03d.pt' % epoch)
 
-        # save discriminator 
-        torch.save({
-            'epoch': epoch,
-            'model_state_dict': discriminator.state_dict(),
-            'optimizer_state_dict': optimizerD.state_dict(),
-            'loss': errD,
-        }, './models/discriminator_%03d.pt' % epoch)
+            # save discriminator 
+            torch.save({
+                'epoch': epoch,
+                'model_state_dict': discriminator.state_dict(),
+                'optimizer_state_dict': optimizerD.state_dict(),
+                'loss': errD,
+            }, './models/discriminator_%03d.pt' % epoch)
