@@ -13,12 +13,14 @@ import torch.optim as optim
 # variables
 
 BATCH_SIZE = 128
-DATASET_ROOT_DIR = r'C:\Users\CORE\Desktop\miqdude\Batik'
+DATASET_ROOT_DIR = r'F:\miqdude\Batik'
 # 'C:\Users\CORE\Desktop\miqdude\Kawung'
 LEARNING_RATE = 0.002
-EPOCH = 2000
-SAVE_INTERVAL = 500
+EPOCH = 10000
+SAVE_INTERVAL = 100
 NOISE_VECTOR_DIM = 100
+FEATURE_MAPS = 64
+CHANNEL_SIZE = 3        # image channel RGB
 
 # check CUDA Support GPU
 cuda = True if torch.cuda.is_available() else False
@@ -41,22 +43,22 @@ class Generator(nn.Module):
 
         """ 
         Inverse transpose convolution network
-        according to paper DCGAN by Alec Radford
+        tuned from DCGAN paper
         """
         self.main = nn.Sequential(
-            nn.ConvTranspose2d(100, 1024, 1, 1, 0, bias = False),
-            nn.BatchNorm2d(1024),
+            nn.ConvTranspose2d(NOISE_VECTOR_DIM, FEATURE_MAPS * 8, 4, 1, 0, bias = False),
+            nn.BatchNorm2d(FEATURE_MAPS * 8),
             nn.ReLU(True),
-            nn.ConvTranspose2d(1024, 512, 5, 2, 0, bias = False),
-            nn.BatchNorm2d(512),
+            nn.ConvTranspose2d(FEATURE_MAPS * 8, FEATURE_MAPS * 4, 4, 2, 1, bias = False),
+            nn.BatchNorm2d(FEATURE_MAPS * 4),
             nn.ReLU(True),
-            nn.ConvTranspose2d(512, 256, 5, 2, 0, bias = False),
-            nn.BatchNorm2d(256),
+            nn.ConvTranspose2d(FEATURE_MAPS * 4, FEATURE_MAPS * 2, 4, 2, 1, bias = False),
+            nn.BatchNorm2d(FEATURE_MAPS * 2),
             nn.ReLU(True),
-            nn.ConvTranspose2d(256, 128, 5, 2, 0, bias = False),
-            nn.BatchNorm2d(128),
+            nn.ConvTranspose2d(FEATURE_MAPS * 2, FEATURE_MAPS, 4, 2, 1, bias = False),
+            nn.BatchNorm2d(FEATURE_MAPS),
             nn.ReLU(True),
-            nn.ConvTranspose2d(128, 3, 5, 2, 0, bias = False),
+            nn.ConvTranspose2d(FEATURE_MAPS, CHANNEL_SIZE, 4, 2, 1, bias = False),
             nn.Tanh()
         )
 
@@ -71,22 +73,22 @@ class Discriminator(nn.Module):
         super(Discriminator, self).__init__()
 
         """ 
-        convolution network
+        convolution network tuned   
         according to paper DCGAN by Alec Radford
         """
         self.main = nn.Sequential(
-            nn.Conv2d(3, 128, 5, 2, 0, bias = False),
+            nn.Conv2d(CHANNEL_SIZE, FEATURE_MAPS, 4, 2, 1, bias = False),
             nn.LeakyReLU(0.2, inplace = True),
-            nn.Conv2d(128, 256, 5, 2, 0, bias = False),
-            nn.BatchNorm2d(256),
+            nn.Conv2d(FEATURE_MAPS, FEATURE_MAPS * 2, 4, 2, 1, bias = False),
+            nn.BatchNorm2d(FEATURE_MAPS * 2),
             nn.LeakyReLU(0.2, inplace = True),
-            nn.Conv2d(256, 512, 5, 2, 0, bias = False),
-            nn.BatchNorm2d(512),
+            nn.Conv2d(FEATURE_MAPS * 2, FEATURE_MAPS * 4, 4, 2, 1, bias = False),
+            nn.BatchNorm2d(FEATURE_MAPS * 4),
             nn.LeakyReLU(0.2, inplace = True),
-            nn.Conv2d(512, 1024, 5, 2, 0, bias = False),
-            nn.BatchNorm2d(1024),
+            nn.Conv2d(FEATURE_MAPS * 4, FEATURE_MAPS * 8, 4, 2, 1, bias = False),
+            nn.BatchNorm2d(FEATURE_MAPS * 8),
             nn.LeakyReLU(0.2, inplace = True),
-            nn.Conv2d(1024, 1, 1, 1, 0, bias = False),
+            nn.Conv2d(FEATURE_MAPS * 8, 1, 4, 1, 0, bias = False),
             nn.Sigmoid()
         )
 
@@ -124,19 +126,26 @@ dataloader = torch.utils.data.DataLoader(
     shuffle=True,
 )
 
-# Optimizers
-optimizerG = torch.optim.Adam(generator.parameters(), lr=LEARNING_RATE, betas=(0.5, 0.999))
-optimizerD = torch.optim.Adam(discriminator.parameters(), lr=LEARNING_RATE, betas=(0.5, 0.999))
+# # Optimizers using Adam
+# optimizerG = torch.optim.Adam(generator.parameters(), lr=LEARNING_RATE, betas=(0.5, 0.999))
+# optimizerD = torch.optim.Adam(discriminator.parameters(), lr=LEARNING_RATE, betas=(0.5, 0.999))
+
+# Optimizers using RMSProp
+optimizerG = torch.optim.SGD(generator.parameters(), lr=LEARNING_RATE, momentum =0.5)
+optimizerD = torch.optim.SGD(discriminator.parameters(), lr=LEARNING_RATE, momentum=0.5)
+
 
 # Tensor object for gpu compute
 Tensor = torch.cuda.FloatTensor if cuda else torch.FloatTensor
 
+print("Training Start.....")
 
 # The training process
 for epoch in range(EPOCH):
 
     for i, data in enumerate(dataloader, 0):
         
+        # Train discriminator with real images
         discriminator.zero_grad() # clears the gradient
         
         real, _ = data
@@ -146,13 +155,14 @@ for epoch in range(EPOCH):
         errD_real = adversarial_loss(output, target)
         
 
+        # Train discriminator with fake images
         # Generator generate fake images
         noise = Variable(torch.randn(input.size()[0], 100, 1, 1).cuda())
         fake = generator(noise)
         target = Variable(torch.zeros(input.size()[0]).cuda())
         
     
-        output = discriminator(fake.detach())
+        output = discriminator(fake.detach()).view(-1)
         errD_fake = adversarial_loss(output, target)
 
         # calculate error/loss on discriminator    
@@ -160,10 +170,9 @@ for epoch in range(EPOCH):
         errD.backward() # backward propagation
         optimizerD.step() # optimizing model
 
+        # Train generator
         generator.zero_grad()
         target = Variable(torch.ones(input.size()[0]).cuda())
-
-
         output = discriminator(fake)
         errG = adversarial_loss(output, target)
         errG.backward()
@@ -174,15 +183,17 @@ for epoch in range(EPOCH):
         
         # logging training loss
         with open("training_log.txt", "a") as myfile:
-            myfile.write('[%d/%d][%d/%d] Loss_D: %.4f Loss_G: %.4f' % (epoch, EPOCH, i, len(dataloader), errD.data, errG.data))
+            myfile.write('[%d/%d][%d/%d] Loss_D: %.4f Loss_G: %.4f\n' % (epoch, EPOCH, i, len(dataloader), errD.data, errG.data))
             myfile.close()
 
-        # Save images and models per interval
-        if epoch % SAVE_INTERVAL == 0:
+        # Save images and models per interval and last epoch
+        if (epoch % SAVE_INTERVAL) == 0 or (epoch == EPOCH - 1):
             vutils.save_image(real, '%s/real_samples_%03d.png' % ("./results",epoch), normalize = True)
             fake = generator(noise)
             vutils.save_image(fake.data, '%s/fake_samples_epoch_%03d.png' % ("./results", epoch), normalize = True)
 
+        # save models once very 1000th epoch and last epoch
+        if (epoch % 2000 == 0) or (epoch == EPOCH -1):  
             # save models for future use
             # save generator 
             torch.save({
